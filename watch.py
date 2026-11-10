@@ -92,9 +92,13 @@ def main() -> None:
     fails = 0
     fail_alerted = False
     log(f"감시 시작: {len(urls)}개, {interval}초 간격")
-    push("입고 감시 시작", "\n".join(urls), tags=["eyes"], priority=2)
+    if not CLOUD:  # 클라우드는 몇 시간마다 재시작하므로 시작 알림 생략
+        push("입고 감시 시작", "\n".join(urls), tags=["eyes"], priority=2)
+    started = time.time()
+    repeat = CONFIG.get("repeat_min", 10) * 60  # 재고가 있는 동안 다시 알리는 간격
+    last_alert: dict[str, float] = {}
 
-    while True:
+    while not MAX_RUNTIME or time.time() - started < MAX_RUNTIME:
         for u in urls:
             try:
                 r = check(u)
@@ -108,6 +112,7 @@ def main() -> None:
                     log(f"{r['name']}: {'재고 ' + str(r['qty']) if in_stock else '품절'}")
                     if in_stock and CLOUD:  # 재시작 틈에 입고됐을 수 있으니 놓치지 않게 알림
                         push(f"재고 있음: {r['name']}", f"수량 {r['qty']}개", click=u, priority=5, tags=["rotating_light"])
+                        last_alert[u] = time.time()
                 elif in_stock and not prev:
                     log(f"입고! {r['name']} 수량 {r['qty']}")
                     push(
@@ -117,6 +122,11 @@ def main() -> None:
                         priority=5,
                         tags=["rotating_light"],
                     )
+                    last_alert[u] = time.time()
+                elif in_stock and prev and time.time() - last_alert.get(u, 0) >= repeat:
+                    log(f"아직 재고 있음: {r['name']} 수량 {r['qty']}")
+                    push(f"아직 재고 있음: {r['name']}", f"수량 {r['qty']}개", click=u, priority=4, tags=["bell"])
+                    last_alert[u] = time.time()
                 elif prev and not in_stock:
                     log(f"다시 품절: {r['name']}")
                     push(f"다시 품절: {r['name']}", u, click=u, priority=3)
